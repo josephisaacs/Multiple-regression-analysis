@@ -1,0 +1,311 @@
+---
+title: Executive summary
+author:
+  - name: Emlyn Bilbie
+    affiliation: 1
+  - name: Aiden Davies
+    affiliation: 1
+  - name: Joseph Isaacs
+    affiliation: 1
+  - name: Daniel Mechtersheimer
+    affiliation: 1
+address:
+  - code: 1
+    address: T09oc_early_4, DATA2902, University of Sydney
+doi_footer: "https://github.sydney.edu.au/DMEC5133/T09oc_early_4"
+abstract: |
+   This report presents the findings of an investigation into predicting the final Mathematics grades of secondary school students in Portugal by performing multiple regression on the results of a survey given to students of Portuguese and Mathematics. Two candidate models were constructed through stepwise variable selection processes. The two models performed simmilarly out-of-sample, so the smaller model was selected, including earlier mathematics marks, family relationship quality, age, and absences from class as predictors. However, the model is prone to inaccuracy in predicting lower marks, and future investigation could be conducted into an 'early intervention' model that does not include past grades.
+papersize: a4
+fontsize: 9pt
+footer_contents: "Executive summary"
+document_date: "20 November 2020"
+output: pinp::pinp
+---
+
+# Introduction
+<!--  A discussion of what questions you are trying to answer. -->
+Using a data set containing information about students in Portugal, and their marks in Mathematics and Portuguese, this project aims to develop a multiple rgression model to predict a student's Mathematics grade based on the other variables in the data set. The model will incorporate students' academic performance through the year, in order to provide estimated final marks that could allow students to plan future studies before receiving their final grade, or be used in the case of illness or misadventure. In this report, we will detail the process that was used to develop the model and discuss its effectiveness by examining model stability, and its performance, both in- and out-of-sample.
+
+# Data set
+<!-- Describe details about how the data set was collected (if known) and the variables in the data set -->
+The data set was retrieved from the \cite{uci}, and contains information relating to students in Portugal, with each row representing a student and each column representing some attribute about the student.
+
+The data was collected for a study by the University of Minho in 2005–06 from two public schools, using school reports and questionnaires \citep*{cortezsilva08}. Two data sets are included, containing information on 395 students of Mathematics and 649 students of Portuguese. Both contain 33 different attributes, with three being grades for the respective subjects and 30 sourced from the questionnaire given to students.
+
+There are 382 students who are listed in both data sets, according to its metadata. We expected that a student's performance in Portuguese might be related to their performance in Mathematics, so for the purposes of our analysis, we merged the two data sets, including only these students. 
+
+However, there were several columns which were near-identical between the two data sets, with only a few differing observations. Since these were variables that would not sensibly differ based on the particular subject described, we surmised that the differences may be due to the survey for each subject being administered at slightly different points in time. To avoid choosing between these near-identical columns in the model selection, we filtered our dataset to only contain rows with the same values for these columns, ending up with 320 rows and 38 columns. The five subject-specific columns were the student's three grades (`G1`, `G2`, `G3`), whether or not they paid for extra classes in the subject (`paid`) and the number of absences from the subject (`absences`). We also re-coded some numeric variables that did not have linearly increasing categories as categorical . These were the two parents' levels of educational attainment (`Medu` and `Fedu`), as well as `traveltime` and `studytime`.
+
+# Analysis
+<!-- Describe how you used multiple regression to analyse the data set. Specifically, you should discuss how you carried out the steps in analysis discussed in class, i.e., exploration of data to find an initial reasonable model (variable selection), checking the model and any changes to the model based on your checking of the model (e.g. transformations) -->
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+library(mplot)
+library(GGally)
+library(stargazer)
+library(caret)
+library(equatiomatic)
+
+merged_st <- read.csv("merged_students_all_factors.csv")
+
+m_null <- lm(g3_mat ~ 1, data = merged_st)
+m_full <- lm(g3_mat ~ .-g3_por, data = merged_st)
+```
+
+## Assumption checking
+
+In Fig. \ref{fig:resid-qq} it appears that the residuals of the model are distributed randomly above and below zero, with the exception of a problematic patch of much lower values. So, if we momentarily disregard these points, the linear model does not appear to be unsuitable. There is also no evidence of fanning or change in variability, so homoskedasticity is fulfilled.
+
+In the Q–Q plot, the straight line is closely followed for the majority of the points, again with the exception of the lower values which deviate quite notably. Despite this, there are enough values for the central limit theorem to hold, so inferences based on the normality assumption should be valid.
+
+```{r resid-qq, fig.show="hold", out.width="45%", fig.cap = "Residual and Q–Q plots for full model", message = FALSE, fig.pos="htbp"}
+resids <- m_full$residuals
+fitteds <- m_full$fitted.values
+m_full_df <- tibble(resids, fitteds)
+
+ggplot(m_full_df, aes(x=fitteds, y=resids)) +
+  geom_point() +
+  geom_smooth(method = "loess", se = FALSE) +
+  geom_hline(yintercept=0) +
+  labs(
+    title="Residuals vs Fitted",
+    x="Fitted values",
+    y="Residuals"
+  ) +
+  theme_minimal()
+ggplot(m_full_df, aes(sample=resids)) +
+  geom_qq() +
+  geom_qq_line() +
+  labs(
+    title="Normal Q-Q",
+    x="Theoretical Quantiles",
+    y="Standardized Residuals"
+  ) +
+  theme_minimal()
+```
+
+Observing the pairs of plots in Fig. \ref{fig:pairs} (see Appendix), it is clear that these troublesome lower points are resultant of a cluster of students who received a mark of 0 for the final mathematics assessment, despite doing well in other assessments. It is possible that this is due to missing values, but since there are real-world explanations for this (such as non-attempts or academic dishonesty), we decided to retain the values. This does mean, however, that caution should be taken when the model predicts smaller values (those below 7 or 8), keeping in mind that they may be inaccurate. However, for predicting higher values, the assumptions are met.
+
+Finally, we assume that all students’ responses are independent of each other, although we would need to confirm this with more information on the students sampled.
+
+## Model selection
+
+```{r models}
+model_b <- step(m_full, direction = "backward", trace=F)
+model_f <- step(m_null, scope = list(lower=m_null, upper=m_full), direction = "forward", trace = F)
+
+# summary(model_b)
+# summary(model_f)
+```
+
+To construct a model for the final mathematics mark (`G3_mat`) by means of multiple regression, we first carried out automated backwards and forwards variable selection using the `step()` function in R, which aims to minimise the model’s Akaike information criterion (AIC) value.
+
+The automated backwards selection returned a model containing 12 variables. Using forward selection instead, the process returned a model with 11 variables, of which 9 were common with the backwards model. Both models had similarly high $r^2$ values of approximately 0.86, indicating that they were strong.
+
+```{r selection}
+#Testing to see if we can add one variable to either model:
+
+#add1(model_b, test='F')
+#add1(model_b, test='F')
+
+#Dropping from backwards model:
+
+#drop1(model_b, test='F')
+m1 <- update(model_b, .~. -nursery)
+# drop1(m1, test='F')
+m2 <- update(m1, .~. -absences_por)
+# drop1(m2, test='F')
+m3 <- update(m2, .~. -goout)
+# drop1(m3, test='F')
+m4 <- update(m3, .~. -activities)
+# drop1(m4, test="F")
+m5 <- update(m4, .~. -sex)
+# drop1(m5, test='F')
+m6 <- update(m5, .~. -g2_por)
+# drop1(m6, test='F')
+m7 <- update(m6, .~. -guardian)
+
+# Dropping from forwards model:
+#drop1(model_f, test='F')
+mf1 <- update(model_f, .~. -paid_mat)
+# drop1(mf1, test='F')
+mf2 <- update(mf1, .~. -activities)
+# drop1(m2, test='F')
+mf3 <- update(mf2, .~. -absences_por)
+# drop1(mf3, test='F')
+mf4 <- update(mf3, .~. -guardian)
+
+mf4$AIC <- AIC(mf4)
+m7$AIC <- AIC(m7)
+```
+
+Further fine-tuning of both models was conducted manually. Adding variables to either model did not produce any significant results. Removing variables, however, proved to be more useful. By iteratively assessing the result of removing a variable with R’s `drop1()` function, we managed to remove several insignificant variables from both models. From our original ‘backwards’ model, we ended up with only five variables, while from our original ‘forwards’ model, we ended up with seven (see Table \ref{tab:new-models} in Appendix). The smaller models allow accurate prediction (with similarly high $r^2$ values), without over-fitting by including too many predictor variables.
+
+Figs. \ref{fig:resid-qq-5var} and \ref{fig:resid-qq-7var} (see Appendix) show that the behaviour for our two new models is very similar to the full model, so our assumptions still hold for higher values, with the same caveat for lower-performing students.
+
+## Model stability
+
+In order to analyse the stability of our models, we started with a model stability plot for the 12 variables used in our original backwards model (Fig. \ref{fig:model-stability}). There are no other models which appear particularly dominant, with all groupings showing relatively equal applicability.
+
+```{r model-stability, fig.cap='Model stability plot', results='asis', fig.width=7, out.width='85%',  fig.pos="htbp"}
+#Boostrapped Model Plot
+vis.model = vis(model_b, nbest=1)
+plot(vis.model, which='boot')
+```
+ 
+A variable inclusion plot (Fig. \ref{fig:vip-plot}) clearly supports the necessary inclusion of `G2_mat` as a strong predictor variable. The other predictors in our model are more varied, although there is also evidence for their inclusion. So, we will retain both models found with stepwise selection and assess their performance.
+
+```{r vip-plot, fig.cap='Variable inclusion plot', fig.width=7, out.width='85%', results='asis', fig.pos="htbp"}
+#Bootstrapped VIP
+plot(vis.model, which='vip')
+```
+
+# Results
+<!-- Provide inferences about any questions of interest that you identify and interpretation of parameter estimates where needed. Discuss the performance of your selected model -->
+
+## In-sample assessment
+
+Our larger and smaller models have very similar AIC values: `r round(mf4$AIC, 2)` and `r round(m7$AIC, 2)` respectively. They also have similar $r^2$ values: 0.849 compared to 0.846. While it is promising to see such strong in-sample performance, the close results do not give us sufficient evidence to select between the two models, or to make any conclusions as to the models’ actual effectiveness. Evaluation of the two models’ out-of-sample performance is needed to draw firmer conclusions.
+
+## Out-of-sample assessment
+
+```{r cv-test}
+set.seed(123)
+control <- trainControl(
+  method = "cv",
+  number = 10,
+  verboseIter = FALSE,
+  allowParallel = FALSE
+  )
+cv5 <- train(
+  g3_mat ~ g2_mat + famrel + g1_mat + age + absences_mat,
+  merged_st,
+  method = "lm",
+  trControl = control
+  )
+cv7 <- train(
+  g3_mat ~ g2_mat + famrel + g1_mat + age + absences_mat + Walc + g2_por,
+  merged_st,
+  method ="lm",
+  trControl = control
+  )
+
+# cv5
+# cv7
+```
+
+In order to assess out-of-sample performance, we conducted 10-fold cross-validation estimation, using the caret package for R. For the smaller model, we attained a root mean square error (RMSE) of 1.649 and a mean absolute error (MAE) of 1.024. For the larger model, our RMSE was 1.651 and our MAE was 1.042.
+
+As evidenced by the bootstrapped confidence intervals in Fig. \ref{fig:out-sample}, these two errors are not significantly different, meaning the two models performed very similarly overall. Since the more complicated model does not provide any improvements to performance, it makes sense to select the smaller, simpler model for easier computation.
+
+```{r out-sample, fig.cap = "Bootstrapped confidence intervals", fig.show="hold", fig.height=1, fig.width=5, out.width="85%", fig.pos="htbp"}
+results <- resamples(list("5-variables" = cv5, "7-variables" = cv7))
+ggplot(results) +
+  theme_minimal() +
+  labs(y = "MAE")
+ggplot(results, metric = "RMSE") + 
+  theme_minimal() + 
+  labs(y = "RMSE")
+```
+
+## Final model
+
+```{r maths-only, message=FALSE}
+st_maths <- read_csv("maths_students.csv")
+m_final <- lm(G3 ~ G1 + G2 + absences + famrel + age, data=st_maths)
+```
+
+Since our selected model does not include any variables specific to Portuguese, the model can be fitted against the original, larger Mathematics data set. For this model, we get,
+
+```{r final-eq, results='asis'}
+extract_eq(m_final, intercept = "beta", use_coefs = TRUE, wrap=TRUE)
+```
+
+As expected, the final mathematics grade (`G3`) tends to increase with the first and second period mathematics grades (`G1` and `G2`). This relationship is stronger with `G2`. This is reasonable since this is the mark that is closest in time to the final mark, so students that do well in second period can be expected to do similarly well in the final assessment. `G3` also increases with better quality of family relationship (`famrel`), indicating that satisfaction with the home environment and family support play significant roles in success. Increases in `age` were associated with a lower grade, possibly as a result of increasing difficulty in later school grades. Further analysis of results across each grade would be required to determine if this is the case. An unexpected result was that more absences from class predicted higher marks. While one would expect that missing class would negatively affect a student's performance, it may also be possible that many absences from class motivate students to study independently, positively impacting their grades.
+
+# Discussion and conclusion
+<!-- Describe any limitations of your analysis and how they might be overcome in future research and provide brief conclusions about the results of your study. -->
+
+As expected, the strongest predictors were students’ other marks, but also their family relationship quality, age and absences. Our out-of-sample performance is strong; however, our model may be prone to inaccuracies for lower marks. Further information about the `G3` marks recorded as 0 could help resolve this for future studies.
+
+To apply this model across all schools in Portugal, a future study should be conducted with data from a larger range of different schools, located in different regions of the country. The geographical similarities between the two schools in the data set may misrepresent the relationship between certain variables when compared to students in different regions. For example, if both schools surveyed were in high-income areas then the model may be inaccurate in low-income areas.
+
+A future study could also attempt to build a model without the `G1` and `G2` marks as predictor variables, in order to identify students who are at risk of under-performing at the start of the school year. However, there are ethical issues that may be raised by identifying these students based on personal characteristics such as sex and family relationships.
+
+\pagebreak
+
+\nocite{*}
+\bibliographystyle{apalike}
+\bibliography{references}
+
+# Appendix
+
+```{r pairs, fig.cap = "Pairs for seleted numeric variables", fig.width=6, fig.height=6, out.width= '100%', fig.pos="htbp"}
+merged_st %>%
+  select(g3_mat,g2_mat,g1_mat,absences_mat,famrel,age) %>%
+  ggpairs(aes(alpha=0.5)) +
+  theme_minimal()
+```
+
+```{r resid-qq-5var, fig.show="hold", out.width="45%", fig.cap = "Residual and Q-Q plots for 5-predictor model", message=F, error=F, warning=F, fig.pos="htbp"}
+resids <- m7$residuals
+fitteds <- m7$fitted.values
+m7_df <- tibble(resids, fitteds)
+ggplot(m7_df, aes(x=fitteds, y=resids)) +
+  geom_point() +
+  geom_smooth(method = "loess", se = FALSE) +
+  geom_hline(yintercept=0) +
+  labs(
+    title="Residuals vs Fitted",
+    x="Fitted values",
+    y="Residuals"
+  ) +
+  theme_minimal()
+ggplot(m7_df, aes(sample=resids)) +
+  geom_qq() +
+  geom_qq_line() +
+  labs(
+    title="Normal Q-Q",
+    x="Theoretical Quantiles",
+    y="Standardized Residuals"
+  ) +
+  theme_minimal()
+```
+
+```{r resid-qq-7var, fig.show="hold", out.width="45%", fig.cap = "Residual and Q-Q plots for 7-predictor model", message=F, error=F, warning=F, fig.pos="htbp"}
+resids <- mf4$residuals
+fitteds <- mf4$fitted.values
+mf4_df <- tibble(resids, fitteds)
+ggplot(mf4_df, aes(x=fitteds, y=resids)) +
+  geom_point() +
+  geom_smooth(method = "loess", se = FALSE) +
+  geom_hline(yintercept=0) +
+  labs(
+    title="Residuals vs Fitted (5-variable model)",
+    x="Fitted values",
+    y="Residuals"
+  ) +
+  theme_minimal()
+ggplot(mf4_df, aes(sample=resids)) +
+  geom_qq() +
+  geom_qq_line() +
+  labs(
+    title="Normal Q-Q",
+    x="Theoretical Quantiles",
+    y="Standardized Residuals"
+  ) +
+  theme_minimal()
+```
+
+```{r new-models, results='asis'}
+stargazer(
+  mf4, m7,
+  header = FALSE,
+  title="Updated models",
+  font.size = "tiny",
+  label = "tab:new-models",
+  keep.stat = c("rsq", "aic", "adj.rsq")
+)
+```
